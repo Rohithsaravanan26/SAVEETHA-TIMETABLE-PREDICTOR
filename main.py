@@ -803,7 +803,13 @@ def get_faculty_reviews(faculty_name: str, db: Session = Depends(get_db)):
 # FRONTEND ROUTE
 # ======================
 
-@app.get("/", response_class=HTMLResponse)
-def serve_frontend():
-    return FileResponse("index.html")
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+def root():
+    return FileResponse("static/index.html")
+
 
