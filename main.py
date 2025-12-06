@@ -22,6 +22,19 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session, relationship
 from google.oauth2 import id_token
 from google.auth.transport import requests as grequests
 import razorpay
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [
+    "*",  # or "https://yourapp.onrender.com"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 # ======================
 # CONFIG
@@ -793,3 +806,4 @@ def get_faculty_reviews(faculty_name: str, db: Session = Depends(get_db)):
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
     return FileResponse("index.html")
+
