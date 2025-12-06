@@ -313,88 +313,190 @@ class FacultySummaryOut(BaseModel):
 # ======================
 
 def parse_sections(raw_text: str) -> List[Section]:
+    import re
     lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
 
     sections: List[Section] = []
     current_course: Optional[str] = None
     current_block: List[str] = []
 
+    GENERIC_HEADINGS = [
+        "course overview", "open elective", "professional elective",
+        "professional core", "basic sciences", "full registration",
+        "phase-i", "phase ii"
+    ]
+
+    DEPARTMENT_KEYWORDS = [
+        "aids", "aiml", "cse", "ece", "eee", "mech", "civil", "ai",
+        "ai & ds", "ai & ml", "ped", "english", "maths"
+    ]
+
+    # ----------------------------------------------------------------------
+    # COURSE TITLE DETECTOR
+    # ----------------------------------------------------------------------
     def is_course_title(line: str) -> bool:
-        if "," in line:
+        return bool(re.match(r"^[A-Za-z0-9]{4,}\s*\[", line))
+
+    # ----------------------------------------------------------------------
+    # SECTION HEADER DETECTOR
+    # EX: "4K1-3, AI - Kumaravelu R"
+    # ----------------------------------------------------------------------
+    def is_section_header(line: str) -> bool:
+        return bool(re.match(r"^([0-9A-Z-]+),\s*(.*?)\s*-\s*(.+)$", line))
+
+    # ----------------------------------------------------------------------
+    # Extract TRUE course title below headings
+    # ----------------------------------------------------------------------
+    def extract_course_title(i):
+        for j in range(i + 1, len(lines)):
+            t = lines[j].strip()
+            low = t.lower()
+
+            # Skip useless headings
+            if any(low.startswith(h) for h in GENERIC_HEADINGS):
+                continue
+
+            # Skip department lines
+            if " - " in t:
+                left, right = t.split(" - ", 1)
+                if left.lower() in DEPARTMENT_KEYWORDS or right.lower() in DEPARTMENT_KEYWORDS:
+                    continue
+
+            # Skip date lines and times
+            if t.startswith("Date:"):
+                continue
+            if re.search(r"\d{2}:\d{2}", t):
+                continue
+
+            # Skip section header
+            if is_section_header(t):
+                continue
+
+            return t  # valid title
+
+        return None
+
+    # ----------------------------------------------------------------------
+    # Validate FACULTY name (to prevent "AIDS & AIML" from becoming faculty)
+    # ----------------------------------------------------------------------
+    def is_real_faculty(name: str) -> bool:
+        name_low = name.lower()
+
+        # Remove departments
+        if any(dept in name_low for dept in DEPARTMENT_KEYWORDS):
             return False
-        if " - " in line:
+
+        # Faculty should contain at least one space (e.g., "Kumaravelu R")
+        if len(name.split()) < 2:
             return False
-        if line.startswith("Date:"):
+
+        # Must contain letters
+        if not re.search(r"[A-Za-z]", name):
             return False
-        if any(line.startswith(day + ":") for day in DAYS):
-            return False
-        if re.search(r'\d{2}:\d{2}', line):
-            return False
+
         return True
 
-    def is_section_header(line: str) -> bool:
-        return re.match(r'^([0-9A-Z-]+),\s*(.*?)\s*-\s*(.+)$', line) is not None
-
-    def process_block(block: List[str], course: Optional[str]) -> Optional[Section]:
+    # ----------------------------------------------------------------------
+    # Process each SECTION BLOCK
+    # ----------------------------------------------------------------------
+    def process_block(block, course):
         if not block or not course:
             return None
 
         header = block[0]
-        m = re.match(r'^([0-9A-Z-]+),\s*(.*?)\s*-\s*(.+)$', header)
+        m = re.match(r"^([0-9A-Z-]+),\s*(.*?)\s*-\s*(.+)$", header)
         if not m:
             return None
 
-        section_code, _subject_name, faculty_name = m.groups()
-        faculty_name = faculty_name.strip(" .")
+        section_code, subj, faculty = m.groups()
+        faculty = faculty.strip()
 
-        time_slots: Dict[str, List[str]] = {day: [] for day in DAYS}
+        # ❌ Ignore wrong faculty like AIDS & AIML
+        if not is_real_faculty(faculty):
+            return None
+
+        time_slots = {day: [] for day in DAYS}
 
         for line in block[1:]:
             if line.startswith("Date:"):
                 continue
+
             for day in DAYS:
                 if line.startswith(day + ":"):
-                    ranges = re.findall(r'(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})', line)
+
+                    # All time ranges on that line
+                    ranges = re.findall(r"(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})", line)
+
                     for start, end in ranges:
-                        p = PERIODS.get((start, end))
-                        if p and p not in time_slots[day]:
-                            time_slots[day].append(p)
+                        # ❌ ignore classes < 30 minutes  
+                        h1, m1 = map(int, start.split(":"))
+                        h2, m2 = map(int, end.split(":"))
+                        duration = (h2 * 60 + m2) - (h1 * 60 + m1)
+                        if duration < 30:
+                            continue
+
+                        # convert to period
+                        if (start, end) in PERIODS:
+                            p = PERIODS[(start, end)]
+                            if p not in time_slots[day]:
+                                time_slots[day].append(p)
+
                     break
+
+        # ❌ If no valid time slots → ignore section
+        if all(len(v) == 0 for v in time_slots.values()):
+            return None
 
         return Section(
             section_code=section_code,
             course_name=course,
-            faculty_name=faculty_name,
+            faculty_name=faculty,
             time_slots=time_slots,
             faculty_rating=None
         )
 
-    for line in lines:
+    # ----------------------------------------------------------------------
+    # MAIN PARSE LOOP
+    # ----------------------------------------------------------------------
+    for i, line in enumerate(lines):
+
+        # COURSE TITLE
         if is_course_title(line):
             if current_block:
                 sec = process_block(current_block, current_course)
                 if sec:
                     sections.append(sec)
-            current_course = line
+
+            base = line
+            extra = extract_course_title(i)
+            if extra:
+                current_course = f"{base} - {extra}"
+            else:
+                current_course = base
+
             current_block = []
             continue
 
+        # SECTION HEADER
         if is_section_header(line):
             if current_block:
                 sec = process_block(current_block, current_course)
                 if sec:
                     sections.append(sec)
+
             current_block = [line]
             continue
 
         current_block.append(line)
 
+    # Last section
     if current_block:
         sec = process_block(current_block, current_course)
         if sec:
             sections.append(sec)
 
     return sections
+
 
 # ======================
 # SCORING HELPERS
@@ -815,6 +917,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 def root():
     return FileResponse("static/index.html")
+
 
 
 
