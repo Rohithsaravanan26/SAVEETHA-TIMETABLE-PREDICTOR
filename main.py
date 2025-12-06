@@ -28,12 +28,16 @@ origins = [
     "*",  # or "https://yourapp.onrender.com"
 ]
 
+
+app = FastAPI()
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],       # Update to your front-end URL in production
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
 # ======================
@@ -811,5 +815,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 def root():
     return FileResponse("static/index.html")
+
 
 
