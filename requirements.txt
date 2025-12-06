@@ -10,4 +10,4 @@ razorpay==1.4.2
 
 # Pydantic v2 stable versions compatible with Render
 pydantic==2.6.1
-pydantic-core==2.14.6
+
